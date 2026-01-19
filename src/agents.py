@@ -1,5 +1,6 @@
 import uuid
 from dotenv import load_dotenv
+from langchain_ollama import ChatOllama
 
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
@@ -26,7 +27,7 @@ load_dotenv("src/keys.env")
 
 def create_pos_agent():
     return create_agent(
-        model=MODEL_NAME,
+        model= ChatOllama(model="mistral"),
         tools=[get_positive_news, get_technical_signals],
         system_prompt=POS_AGENT_PROMPT,
         name="positive_agent",
@@ -34,7 +35,7 @@ def create_pos_agent():
 
 def create_neg_agent():
     return create_agent(
-        model=MODEL_NAME,
+        model=ChatOllama(model="mistral"),
         tools=[get_negative_news, get_technical_signals],
         system_prompt=NEG_AGENT_PROMPT,
         name="negative_agent",

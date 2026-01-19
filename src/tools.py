@@ -1,3 +1,4 @@
+from pydoc import text
 import uuid
 from dotenv import load_dotenv
 from langchain_tavily import TavilySearch
@@ -151,13 +152,19 @@ def make_decision(
 ):
     """Make final investment decision based on extracted signals"""
     def count_bullets(text: str) -> int:
-        return len(re.findall(r"•", text)) if "•" in text else 1
+    # Hľadá symbol • ALEBO čísla na začiatku riadku (napr. 1. alebo 2.)
+    # Toto zachytí Mistralov štýl z tvojho recap.txt
+        found = re.findall(r"•|^\s*\d+\.|\n\s*\d+\.", text, re.MULTILINE)
+    
+    # Debug výpis do konzoly, aby si videl, koľko bodov pridelil (uvidíš v termináli)
+        score = len(found) if len(found) > 0 else 1
+        return score
     
     def check_signals(text: str, keywords: list[str]) -> bool:
         return any(word in text.lower() for word in keywords)
 
     #score calculation
-    pos__score = count_bullets(positive_news)
+    pos_score = count_bullets(positive_news)
     neg_score = count_bullets(negative_news)
 
     # Signal detection
@@ -165,10 +172,10 @@ def make_decision(
     strong_neg_signals = check_signals(negative_news, ["decline", "loss", "downgrade", "sell", "bearish"])
 
 
-    if pos__score > neg_score and strong_pos_signals:
+    if pos_score > neg_score and strong_pos_signals:
         decision = "BUY"
         reasoning = f"The positive news outweighs the negative news for {stock_symbol}."
-    elif neg_score > pos__score and strong_neg_signals:
+    elif neg_score > pos_score and strong_neg_signals:
         decision = "SELL/AVOID"
         reasoning = f"The negative news outweighs the positive news for {stock_symbol}."
     else:

@@ -10,7 +10,6 @@ import pandas as pd
 def importer(stock_symbol):
     ticker = stock_symbol
     data = yf.download(ticker, period="5y")
-    
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.get_level_values(0)
 
@@ -27,7 +26,7 @@ def hello():
 def analyze_stock(supervisor, stock_symbol):
     print(f"\nStarting analysis for stock: {stock_symbol.upper()}\n")
 
-    user_query = f"Should I invest in {stock_symbol} stock? I want to hear both bullish and bearish arguments before making a decision."
+    user_query = f"Analyze {stock_symbol} stock. I need a debate between a bull and a bear to decide."
 
     unique_run_id = str(uuid.uuid4()).split('-')[0] 
     thread_id = f"analysis-{stock_symbol.lower()}-{unique_run_id}"
