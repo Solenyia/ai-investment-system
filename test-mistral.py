@@ -1,88 +1,126 @@
 import os
 import uuid
+import time
 from docx import Document
 from datetime import datetime
 
-# Import tvojich funkcií z main.py
+# Import tvojich funkcií z main.py a LangChain správy
 from main import importer, create_supervisor_agent
+from langchain_core.messages import ToolMessage, AIMessage
 
-def extract_decision_from_final(text):
+def extract_decision_from_stream(node_update):
     """
-    GPT-4o ako final_agent zvyčajne vráti text s rozhodnutím.
-    Tento parser hľadá kľúčové slová.
+    Prehľadáva update z grafu a hľadá finálne rozhodnutie.
     """
-    if not text or "Successfully transferred" in text:
+    messages = node_update.get("messages", [])
+    if not messages:
         return None
-    
-    text_upper = text.upper()
-    if "BUY" in text_upper: return "BUY"
-    if "SELL" in text_upper or "AVOID" in text_upper: return "SELL"
-    if "HOLD" in text_upper: return "HOLD"
+
+    for m in messages:
+        content = str(m.content).upper()
+        
+        # 1. Kontrola ToolMessage (výstup z make_decision)
+        if isinstance(m, ToolMessage):
+            if "BUY" in content: return "BUY"
+            if "SELL" in content or "AVOID" in content: return "SELL"
+            if "HOLD" in content: return "HOLD"
+
+        # 2. Kontrola AIMessage (text od agenta)
+        if isinstance(m, AIMessage):
+            if "SUCCESSFULLY TRANSFERRED" in content:
+                continue
+            if "BUY" in content: return "BUY"
+            if "SELL" in content or "AVOID" in content: return "SELL"
+            if "HOLD" in content: return "HOLD"
+            
     return None
 
-def run_benchmark(stock_symbol="AAPL", iterations=5):
+def run_benchmark_suite(stocks=["AAPL", "TSLA", "NVDA"], iterations=2):
+    """
+    Spustí MAS analýzu s meraním času.
+    """
+    all_results = []
     doc = Document()
-    doc.add_heading(f'Hybrid Benchmark Report: Mistral (Agents) + GPT-4o (Logic)', 0)
+    doc.add_heading(f'MAS Investment Report - {datetime.now().strftime("%Y-%m-%d")}', 0)
     
-    if f"{stock_symbol.upper()}_historical_data.csv" not in os.listdir():
-        importer(stock_symbol)
+    # Celkový štart benchmarku
+    overall_start_time = time.time()
     
-    # Tu sa vytvorí supervisor (GPT-4o), ktorý riadi Mistral agentov
+    print("Inicializujem Supervisor agenta (GPT-4o)...")
     supervisor = create_supervisor_agent()
 
-    for i in range(1, iterations + 1):
-        print(f"\n>>> BEŽÍ TEST {i}/{iterations}...")
+    for stock in stocks:
+        stock = stock.upper()
+        print(f"\n{'='*40}")
+        print(f" ANALÝZA AKCIE: {stock}")
+        print(f"{'='*40}")
         
-        thread_id = f"hybrid-bench-{uuid.uuid4().hex[:4]}"
-        user_query = f"Should I invest in {stock_symbol} stock?"
-        
-        final_decision_found = "NEURČITÉ"
-        full_final_reasoning = ""
-        supervisor_summary = ""
+        if f"{stock}_historical_data.csv" not in os.listdir():
+            print(f"Sťahujem dáta pre {stock}...")
+            importer(stock)
 
-        # Sledujeme stream správ
-        for chunk in supervisor.stream(
-            {"messages": [{"role": "user", "content": user_query}]},
-            config={"configurable": {"thread_id": thread_id}}
-        ):
-            for node_name, node_update in chunk.items():
-                if "messages" in node_update:
-                    msg_content = node_update["messages"][-1].content
-                    
-                    # 1. Zachytíme analýzu od final_agent (GPT-4o)
-                    if node_name == "final_agent":
-                        # Ignorujeme technické prechody, ukladáme len skutočný text
-                        if "Successfully transferred" not in msg_content:
-                            full_final_reasoning = msg_content
-                            decision = extract_decision_from_final(msg_content)
-                            if decision:
-                                final_decision_found = decision
+        for i in range(1, iterations + 1):
+            print(f"\n>>> TEST {i}/{iterations} pre {stock} prebieha...")
+            
+            # Štart času pre jeden konkrétny test
+            test_start_time = time.time()
+            
+            thread_id = f"test-{stock.lower()}-{uuid.uuid4().hex[:4]}"
+            user_query = f"Analyze {stock} stock. I need a full debate and final decision."
+            
+            final_decision_found = "NEURČITÉ"
+            
+            # Streamovanie grafu
+            for chunk in supervisor.stream(
+                {"messages": [{"role": "user", "content": user_query}]},
+                config={"configurable": {"thread_id": thread_id}}
+            ):
+                for node_name, node_update in chunk.items():
+                    decision = extract_decision_from_stream(node_update)
+                    if decision:
+                        final_decision_found = decision
 
-                    # 2. Zachytíme zhrnutie od supervisora (GPT-4o)
-                    if node_name == "InvestmentSupervisor":
-                        if "Successfully transferred" not in msg_content:
-                            supervisor_summary = msg_content
+            # Koniec času pre test
+            test_duration = time.time() - test_start_time
+            
+            # Uloženie výsledkov
+            all_results.append({
+                "akcia": stock,
+                "test": i,
+                "vysledok": final_decision_found,
+                "cas": test_duration
+            })
+            
+            # Zápis do Wordu
+            doc.add_heading(f'{stock} - Test {i}', level=1)
+            doc.add_paragraph(f"Finálne rozhodnutie: {final_decision_found}")
+            doc.add_paragraph(f"Trvanie testu: {test_duration:.2f} sekúnd")
+            
+            print(f"   HOTOVO: {final_decision_found} (Čas: {test_duration:.2f}s)")
 
-        # Zápis do Wordu
-        doc.add_heading(f'Test č. {i}', level=1)
-        
-        table = doc.add_table(rows=1, cols=2)
-        table.style = 'Table Grid'
-        cells = table.rows[0].cells
-        cells[0].text = "VÝSLEDNÉ ROZHODNUTIE:"
-        cells[1].text = final_decision_found
-        
-        doc.add_heading('Zhrnutie od Supervisora (GPT-4o):', level=2)
-        doc.add_paragraph(supervisor_summary if supervisor_summary else "Zhrnutie chýba.")
-        
-        doc.add_heading('Argumentácia Final Agenta (GPT-4o):', level=2)
-        doc.add_paragraph(full_final_reasoning if full_final_reasoning else "Detailné zdôvodnenie chýba.")
-        
-        doc.add_page_break()
+    # Celkový koniec benchmarku
+    total_duration = time.time() - overall_start_time
 
-    filename = f"Hybrid_Report_{stock_symbol}.docx"
-    doc.save(filename)
-    print(f"\n--- HOTOVO! Report uložený: {filename} ---")
+    # ZÁVEREČNÁ TABUĽKA
+    print("\n\n" + "="*50)
+    print(f"{'VÝSLEDNÝ STAV VYHODNOTENIA (MAS)':^50}")
+    print("="*50)
+    print(f"{'AKCIA':<15} | {'TEST':<8} | {'ROZHODNUTIE':<15} | {'TRVANIE':<10}")
+    print("-" * 75)
+    
+    for res in all_results:
+        print(f"{res['akcia']:<15} | {res['test']:<8} | {res['vysledok']:<15} | {res['cas']:>6.2f} s")
+    
+    print("-" * 75)
+    print(f"{'CELKOVÝ ČAS BENCHMARKU:':<43} {total_duration/60:>15.2f} min")
+    print("="*50)
+
+    # Uloženie reportu
+    report_name = f"MAS_Benchmark_Report_{datetime.now().strftime('%H%M%S')}.docx"
+    doc.save(report_name)
+    print(f"\nKompletný report uložený v: {report_name}")
 
 if __name__ == "__main__":
-    run_benchmark("AAPL", iterations=5)
+    # 3 akcie po 2 testy
+    zoznam_akcii = ["AAPL", "TSLA", "NVDA"]
+    run_benchmark_suite(stocks=zoznam_akcii, iterations=2)
